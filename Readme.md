@@ -74,9 +74,9 @@ If our work is useful to you, please cite our paper as:
 
 ```latex
 @artical{qsyao2020landmarkattack,
-  title={Miss the Point: Targeted Adversarial Attack on Multiple Landmark Detection},
+  title={A Hierarchical Feature Constraint to Camouflage Medical Adversarial Attacks},
   author={Qingsong Yao, Zecheng He, Yi Lin, Kai Ma, Yefeng Zheng, and S. Kevin Zhou},
-  booktitle={A Hierarchical Feature Constraint to Camouflage Medical Adversarial Attacks},
+  booktitle={International Conference on Medical Image Computing and Computer-Assisted Intervention},
   year={2021}
 }
 ```
