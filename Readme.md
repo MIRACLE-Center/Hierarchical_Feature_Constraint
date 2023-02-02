@@ -10,6 +10,11 @@ Deep learning based methods for medical images can be easily compromised by adve
 We then propose a simple-yet-effective hierarchical feature constraint (HFC), a novel add-on to conventional white-box attacks, which assists to hide the adversarial feature in the target feature distribution. The proposed method is evaluated on three medical datasets, both 2D and 3D, with different modalities. The experimental results demonstrate the superiority of HFC, \emph{i.e.,} it bypasses an array of state-of-the-art adversarial medical AE detectors more efficiently than competing adaptive attacks.
 
 ## Download datsets
+
+  ```bash
+  mkdir datasets
+  ```
+
 Download Fundoscopy (APTOS) or Chest X-ray (CXR) to ./datasets/
 - APTOS: https://www.kaggle.com/c/aptos2019-blindness-detection
 - Chest X-ray: https://www.kaggle.com/datasets/paultimothymooney/chest-xray-pneumonia

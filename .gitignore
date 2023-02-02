@@ -6,9 +6,10 @@ tsne/
 runs_CXR/
 runs_Brain/
 torchadver/
-advertorch/
+advertorch/ 
 *.png
 *_jpeg.py
+*_reduce.py
 *_reduce.py
 gmm_attack_ab.py
 *3d.py
@@ -19,3 +20,4 @@ gmm_attack_ab.py
 *_tsne.py
 gen_base_adv_bpda.py
 test_ours.py
+adv_detectors.py
