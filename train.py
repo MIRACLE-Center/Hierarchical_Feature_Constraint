@@ -1,11 +1,4 @@
 import argparse
-import os
-import random
-import shutil
-import time
-import warnings
-import ipdb
-from numpy.lib.financial import ipmt
 from tqdm import tqdm
 import numpy as np
 
@@ -13,17 +6,12 @@ import torch
 import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
-import torch.distributed as dist
 import torch.optim
-import torch.multiprocessing as mp
 import torch.utils.data
 import torch.utils.data.distributed
-from torch.autograd import Variable
+
 from torchvision.models.inception import InceptionOutputs
 from torchvision.models.googlenet import GoogLeNetOutputs
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
-# import torchvision.models as models
 
 import my_models as models
 
@@ -32,31 +20,19 @@ from utils import *
 from network import Cls_Net
 from saver import Saver
 
-from sklearn.metrics import cohen_kappa_score
-from sklearn.metrics import f1_score
-from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.metrics import accuracy_score
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
-def linfball_proj(center, radius, t, in_place=True):
-    noise = center - t
-    noise = torch.clamp(noise, min=-radius, max=radius)
-    return center + noise
-
-
 def train(train_loader, model, criterion, optimizer, epoch, args):
     top1 = AverageMeter('Acc@1', ':6.2f')
     losses = AverageMeter('Loss', ':.4e')
-    progress = ProgressMeter(
-        len(train_loader),
-        [losses, top1],
-        prefix="Epoch: [{}]".format(epoch))
 
     model.train()
 
-    for i, (images, target) in enumerate(tqdm(train_loader, desc=f"Train epoch {epoch}")):
+    for images, target in tqdm(train_loader, desc=f"Train epoch {epoch}"):
         if args.gpu:
             images = images.cuda()
             target = target.cuda()
@@ -115,16 +91,10 @@ def eval(test_loader, model, criterion, optimizer, epoch, args, saver=None):
         logits = np.concatenate([logits, output.transpose(1,0)[1].detach().cpu().numpy()], axis=0)
     
     acc = accuracy_score(gt, pred, normalize=True)
-    # mf1 = f1_score(gt, pred, average='macro')
-    # kappa = cohen_kappa_score(gt, pred, weights='quadratic')
-    # kappa = roc_auc_score(gt, logits)
 
     print('Eval Epoch [{}][{}] Acc {acc:.5f} loss {loss.avg:.3f}'
             .format(epoch, len(test_loader), acc=acc, loss=losses))
     
-    # if saver is not None:
-    #     saver.save_metrics(acc=acc, loss=losses.avg)
-
     return losses.avg, acc
 
 def run(args):
@@ -185,7 +155,7 @@ if __name__ == "__main__":
                         help='number of total epochs to run')
     parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
-    parser.add_argument('-b', '--batch-size', default=32, type=int,
+    parser.add_argument('-b', '--batch-size', default=8, type=int,
                         metavar='N',
                         help='mini-batch size (default: 256), this is the total '
                             'batch size of all GPUs on the current node when '

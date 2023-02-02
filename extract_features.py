@@ -1,39 +1,21 @@
 from __future__ import print_function
 import argparse
 import os
-import random
-import shutil
-import time
-import warnings
-from tqdm import tqdm
 import numpy as np
 import pickle
 
 import torch
-import torch.nn as nn
 import torch.nn.parallel
-import torch.backends.cudnn as cudnn
-import torch.distributed as dist
 import torch.optim
-import torch.multiprocessing as mp
 import torch.utils.data
 import torch.utils.data.distributed
-from torchvision.models.inception import InceptionOutputs
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
-import torchvision.models as models
 
 from datasets import get_dataloader
 from utils import *
 from network import infer_Cls_Net_vgg, infer_Cls_Net_resnet
 from saver import Saver
-import attackers
 
-from sklearn.metrics import cohen_kappa_score
-from sklearn.metrics import f1_score
-from sklearn.metrics import accuracy_score
 from scipy.stats import pearsonr
-
 import matplotlib.pyplot as plt
 
 # os.environ['CUDA_VISIBLE_DEVICES'] = '0'
@@ -45,26 +27,10 @@ def plot_fig(key, mse_raw, array, temp_dir):
     plt.savefig(os.path.join(temp_dir, key))
     plt.cla()
 
-def get_pearsonr_mse(kd, lid, maha, src_model, temp_dir):
-    key = 'try_ex1_layer7_Linf_4'
-    layer_index = 7
-    save_dir = os.path.join(temp_dir, key)
-    data = np.load(os.path.join(temp_dir, f'{key}.npy'))[:700]
-    mse = np.load(os.path.join(temp_dir, key, 'mse.npy'))[:700]
-    mse_raw = np.load(os.path.join(temp_dir, key, 'mse_raw.npy'))[:700]
-    plot_fig('mse', mse_raw, mse, save_dir)
-    plot_fig('KD', mse_raw, kd[key]['kd_score'].transpose()[layer_index], save_dir)
-    plot_fig('LID', mse_raw, lid[key][20].transpose()[layer_index], save_dir)
-    plot_fig('MAHA', mse_raw, maha[key][0.0005].transpose()[layer_index], save_dir)
-
 def run(args, default_victims):
 
     key_clean = 'clean'
     key_attack = args.attack
-    # key_attack = 'try_ex3_layer7_Linf_4'
-    # key_attack = 'try_ex1_layer7_Linf_4'
-    # key_attack = 'try_ex1_layer14_Linf_4'
-    # key_attack = 'try_ex1_layer2_Linf_4'
     key_noise = args.noise
     attack_methods = [key_clean, key_attack, key_noise]
     print(f"Extract features for attack: {key_attack}")
@@ -80,7 +46,7 @@ def run(args, default_victims):
     
     train_loader = get_dataloader(dataset=args.dataset, mode='train',\
         batch_size=args.batch_size, num_workers=args.workers, \
-        num_fold=args.num_fold, targeted=False)
+        num_fold=args.num_fold, targeted=False, arch=args.arch)
     num_classes = train_loader.dataset.num_classes
     num_classes_selected = train_loader.dataset.num_classes_selected
 
@@ -207,64 +173,6 @@ def run(args, default_victims):
     with open(save_dnn_pth, 'wb') as f:
         pickle.dump(DNN_recorder, f)
         
-    # # Record GMM
-    # save_gmm_pth = os.path.join(save_dir, 'gmm.pkl')
-    # rewrite_gmm = False or rewrite_all
-    # if not os.path.isfile(save_gmm_pth) or rewrite_gmm:
-    #     GMM_recorder = dict()
-    #     label = np.load(os.path.join(temp_dir, 'gt' + '.npy'))
-    #     for attack_name in attack_methods:
-    #         GMM_recorder[attack_name] = dict()
-    #         GMM_recorder[attack_name]['data'] = \
-    #             np.load(os.path.join(temp_dir, attack_name + '.npy'))
-    #     from adv_detectors import get_GMM_scores
-    #     get_GMM_scores(src_model, GMM_recorder, temp_dir, num_features, num_classes_selected)
-    #     logging.info(f"Save GMM scores to {save_gmm_pth}")
-    #     with open(save_gmm_pth, 'wb') as f:
-    #         pickle.dump(GMM_recorder, f)
-    # else:
-    #     logging.info(f"Load GMM scores from {save_gmm_pth}")
-    #     with open(save_gmm_pth, 'rb') as f:
-    #         GMM_recorder = pickle.load(f)
-    # print('\n Layer ID: {} '.format('\t'.join(str_index_layers)), end='')
-    # print(f'\n GMM score :')
-    # for index_layer in range(num_features):
-    #     temp_aucroc = get_pairs_auc(GMM_recorder[index_layer][key_clean],
-    #                     GMM_recorder[index_layer][key_noise],
-    #                     GMM_recorder[index_layer][key_attack], negative=False)
-    #     print('{:.3f}'.format(temp_aucroc), end='\t')
-    # print('\n')
-
-    # # Record DkNN
-    # save_dknn_pth = os.path.join(save_dir, 'dknn.pkl')
-    # rewrite_dknn = False or rewrite_all
-    # if not os.path.isfile(save_dknn_pth) or rewrite_dknn:
-    #     DkNN_recorder = dict()
-    #     label = np.load(os.path.join(temp_dir, 'gt' + '.npy'))
-    #     for attack_name in attack_methods:
-    #         DkNN_recorder[attack_name] = dict()
-    #         DkNN_recorder[attack_name]['data'] = \
-    #             np.load(os.path.join(temp_dir, attack_name + '.npy'))
-    #     from adv_detectors import build_dknn
-    #     build_dknn(src_model, DkNN_recorder, train_loader, label, num_features=num_features)
-    #     logging.info(f"Save DkNN scores to {save_dknn_pth}")
-    #     with open(save_dknn_pth, 'wb') as f:
-    #         pickle.dump(DkNN_recorder, f)
-    # else:
-    #     logging.info(f"Load DkNN scores from {save_dknn_pth}")
-    #     with open(save_dknn_pth, 'rb') as f:
-    #         DkNN_recorder = pickle.load(f) 
-    # print('\n Layer ID: {} Logits_Regression'.format('\t'.join(str_index_layers)), end='')
-    # print(f'DkNN score :\n ')
-    # for index_layer in range(num_features):
-    #     temp_aucroc = get_pairs_auc(DkNN_recorder[index_layer][key_clean],
-    #                     DkNN_recorder[index_layer][key_noise],
-    #                     DkNN_recorder[index_layer][key_attack], negative=False)
-    #     print('{:.3f}'.format(temp_aucroc), end='\t')
-    # final_aucroc = get_pairs_auc(DkNN_recorder[key_clean]['score'],
-    #                 DkNN_recorder[key_noise]['score'],
-    #                 DkNN_recorder[key_attack]['score'], negative=False)
-    # print(f'DkNN score: {final_aucroc}')
 
     # Record MAHA
     save_maha_pth = os.path.join(save_dir, 'maha.pkl')
@@ -353,15 +261,15 @@ def run(args, default_victims):
                     bu_recorder[key_noise]['scores'],
                     bu_recorder[key_attack]['scores'], negative=True)
     print(f'BU score: {final_aucroc}')
-    # clean_score = np.stack((bu_recorder[key_clean]['scores'], kd_recorder[key_clean]['kd_score'].transpose()[num_features-1]), axis=-1)
-    # noise_score = np.stack((bu_recorder[key_noise]['scores'], kd_recorder[key_noise]['kd_score'].transpose()[num_features-1]), axis=-1)
-    # attack_score = np.stack((bu_recorder[key_attack]['scores'], kd_recorder[key_attack]['kd_score'].transpose()[num_features-1]), axis=-1)
-    # logits_aucroc, model_lr = logits_regression_auc(clean_score, noise_score, attack_score)
-    # print(f'KD_BU score: {logits_aucroc}')
-    # bu_recorder['kd_bu_lr'] = model_lr
-    # bu_recorder['kd_bu_clean'] = clean_score
-    # bu_recorder['kd_bu_noise'] = noise_score
-    # bu_recorder['kd_bu_attack'] = attack_score
+    clean_score = np.stack((bu_recorder[key_clean]['scores'], kd_recorder[key_clean]['kd_score'].transpose()[num_features-1]), axis=-1)
+    noise_score = np.stack((bu_recorder[key_noise]['scores'], kd_recorder[key_noise]['kd_score'].transpose()[num_features-1]), axis=-1)
+    attack_score = np.stack((bu_recorder[key_attack]['scores'], kd_recorder[key_attack]['kd_score'].transpose()[num_features-1]), axis=-1)
+    logits_aucroc, model_lr = logits_regression_auc(clean_score, noise_score, attack_score)
+    print(f'KD_BU score: {logits_aucroc}')
+    bu_recorder['kd_bu_lr'] = model_lr
+    bu_recorder['kd_bu_clean'] = clean_score
+    bu_recorder['kd_bu_noise'] = noise_score
+    bu_recorder['kd_bu_attack'] = attack_score
     with open(save_bu_pth, 'wb') as f:
         pickle.dump(bu_recorder, f)
 
@@ -420,8 +328,6 @@ def run(args, default_victims):
         with open(save_maha_lr_pth, 'wb') as f:
             pickle.dump(maha_model_lr, f)
     
-    # get_pearsonr_mse(kd_recorder, LID_recorder, maha_recorder, src_model, temp_dir)
-    # import ipdb; ipdb.set_trace()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Training Code')

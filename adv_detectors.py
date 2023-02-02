@@ -9,34 +9,6 @@ from torch.autograd import Variable
 from scipy.spatial.distance import pdist, cdist, squareform
 from tqdm import tqdm
 
-def test_one(batch, array):
-    temp = cdist(batch, np.expand_dims(array, 0))[:, 0]
-    idx = np.argpartition(temp, 21)[1:21]
-    idx_batch = batch[idx]
-    import ipdb; ipdb.set_trace()
-# lid of a batch of query points X
-def mle_batch_test(data, batch, real_batch, k):
-    '''
-    commpute lid score using data & batch with k-neighbors
-    return: a: computed LID score
-    '''
-    data = np.asarray(data, dtype=np.float32)
-    batch = np.asarray(batch, dtype=np.float32)
-
-    k = min(k, len(data)-1)
-    f = lambda v: - k / np.sum(np.log(v/v[-1]))
-    # f = lambda v: v.mean()
-    adv = cdist(batch, data)
-    adv = np.apply_along_axis(np.sort, axis=1, arr=adv)[:,1:k+1]
-    real = cdist(real_batch, data)
-    real = np.apply_along_axis(np.sort, axis=1, arr=real)[:,1:k+1]
-    adv_lid = np.apply_along_axis(f, axis=1, arr=adv)
-    real_lid = np.apply_along_axis(f, axis=1, arr=real)
-    max_lid = np.argmax(adv_lid)
-    print(adv_lid[max_lid])
-    test_one(batch, data[max_lid])
-    import ipdb; ipdb.set_trace()
-    return a
 
 # lid of a batch of query points X
 def mle_batch(data, batch, k):
@@ -305,8 +277,7 @@ def get_Mahalanobis_score_adv(model, maha_recorder, test_label, num_output, mean
     # num_output : layer_index
     '''
     model.eval()
-    Mahalanobis = []
-    batch_size = 100
+    batch_size = 10
     total = 0
     num_classes = mean[0].shape[0]
     data_len = maha_recorder['clean']['data'].shape[0]
@@ -378,7 +349,6 @@ def get_Mahalanobis_score_adv(model, maha_recorder, test_label, num_output, mean
                 for magnitude in m_list:
                     new_data = torch.zeros_like(data)
                     gradient = data.grad.sign()
-                    gradient = gradient.permute(0,2,3,1).div(image_net_std).permute(0,3,1,2)
                     new_data = data.data + magnitude * gradient
 
                     with torch.no_grad():
@@ -410,7 +380,7 @@ def get_LID(model, LID_recorder, test_label, num_output):
     return: LID score
     '''
     model.eval()  
-    batch_size = 100
+    batch_size = 10
     
     # overlap_list = [10, 20, 30, 40, 50, 60, 70, 80, 90]
     overlap_list = [20]
@@ -492,7 +462,7 @@ def kd_estimator(model, kd_estimator_record, train_loader, num_classes, num_outp
         
 def get_kd_score(model, KD_recorder, test_label, num_classes, kd_estimator_record, num_output):
     model.eval()
-    batch_size = 100
+    batch_size = 10
     clean_kdes = kd_estimator_record['clean']
 
     for key, value in KD_recorder.items():
@@ -529,7 +499,7 @@ def get_kd_score(model, KD_recorder, test_label, num_classes, kd_estimator_recor
                 
 def get_svm_score(model, svm_recorder):
     model.eval()
-    batch_size = 100
+    batch_size = 10
     split = 0.3
 
     for key, value in svm_recorder.items():
@@ -631,13 +601,14 @@ class DNN_CNN_Feature(torch.nn.Module):
         print('DNN Cls Layer {} AUC {:.3f}'.format(id_layer, self.final_auc))
         
     def infer_auc(self, test_set, infer_model):
-        batch_size = 100
+        batch_size = 10
         num_data = test_set[0].shape[0]
         num_batch = num_data // batch_size
         infer_out = list()
         self.model.eval()
         for index in range(num_batch + 1):
             batch_data = test_set[0][index*batch_size : min(num_data, (index+1)*batch_size)]
+            if batch_data.shape[0] == 0: break
             with torch.no_grad():
                 batch_feature = infer_model.get_feature(batch_data, self.id_layer)
                 pred = self.model(batch_feature).squeeze()
@@ -646,7 +617,7 @@ class DNN_CNN_Feature(torch.nn.Module):
         return roc_auc_score(test_set[1].cpu().int().numpy(), infer_out)
     
     def infer_array(self, input_array, infer_model):
-        batch_size = 100
+        batch_size = 10
         num_data = input_array.shape[0]
         num_batch = num_data // batch_size
         infer_out = list()
@@ -654,6 +625,7 @@ class DNN_CNN_Feature(torch.nn.Module):
         self.model = self.model.cuda()
         for index in range(num_batch + 1):
             batch_data = input_array[index*batch_size : min(num_data, (index+1)*batch_size)]
+            if batch_data.shape[0] == 0: break
             with torch.no_grad():
                 batch_feature = infer_model.get_feature(batch_data, self.id_layer)
                 pred = self.model(batch_feature).squeeze()
@@ -712,65 +684,9 @@ def train_DNN_classifier(model, DNN_recorder, num_cnn_layer=13):
         DNN_recorder[id_layer]['noise_pred'] = cls_model.noise_pred
         DNN_recorder[id_layer]['adv_pred'] = cls_model.adv_pred
 
-from sklearn.neighbors import NearestNeighbors
-def build_dknn(scr_model, DkNN_recorder, train_loader, label, num_k=5, num_features=15):
-    keys = [*DkNN_recorder.keys()]
-    key_clean, key_noise, key_adv = keys[0], keys[2], keys[1]
-    from tqdm import tqdm
-    features = [[] for i in range(num_features)]
-    targets = []
-    for data, target in tqdm(train_loader, desc='Record train features'):
-        data = data.cuda()
-        targets.append(target)
-        with torch.no_grad():
-            output, out_features = scr_model.feature_list(data)
-            for index, item in enumerate(out_features):
-                features[index].append(item.view(item.shape[0], item.shape[1], -1).mean(-1)\
-                    .detach().cpu().numpy())
-    features = [np.concatenate(item) for item in features]
-    targets = np.concatenate(targets)
-    DkNN_recorder['labels'] = targets
-
-    infer_features = [[[] for i in range(num_features)] for i in range(3)]
-    preds = [[] for i in range(3)]
-    for index, key in enumerate(keys):
-        batch_size = 100
-        data = torch.from_numpy(DkNN_recorder[key]['data']).float().cuda()
-        num_batches = int(data.shape[0] // batch_size)
-        for id_batch in list(range(num_batches)):
-            input_patch = data[id_batch*batch_size : (id_batch+1)*batch_size]
-            with torch.no_grad():
-                pred, test_feature = scr_model.feature_list(input_patch)
-            for id_layer, item in enumerate(test_feature):
-                infer_features[index][id_layer].append(item.view(item.shape[0], item.shape[1], -1).mean(-1)\
-                    .detach().cpu().numpy())
-            preds[index].append(pred.argmax(-1).detach().cpu().numpy())
-        infer_features[index] = [np.concatenate(item) for item in infer_features[index]]
-        preds[index] = np.concatenate(preds[index])
-
-    for id_layer, item in enumerate(features):
-        # if id_layer == 0 or id_layer == 14:
-        #     import ipdb; ipdb.set_trace()
-        knn_model = NearestNeighbors(n_neighbors=num_k, metric='cosine').fit(item)
-        DkNN_recorder[id_layer] = dict()
-        DkNN_recorder[id_layer]['model'] = knn_model
-        for id_key, key in enumerate(keys):
-            neighbors = knn_model.kneighbors(infer_features[id_key][id_layer])[1]
-            neighbors_classes = targets[neighbors]
-            neighbors_correct = (neighbors_classes.transpose() == preds[id_key]).transpose()
-            dknn_scores = neighbors_correct.sum(-1) / num_k
-            DkNN_recorder[id_layer][key] = dknn_scores
-    
-    for id_key, key in enumerate(keys):
-        ensamble = list()
-        for id_layer, item in enumerate(features):
-            ensamble.append(np.expand_dims(DkNN_recorder[id_layer][key], -1))
-        ensamble = np.concatenate(ensamble, axis=-1).sum(-1)
-        DkNN_recorder[key]['score'] = ensamble
-
 def get_bu_scores(scr_model, bu_recorder):
     scr_model.set_dropout(True)
-    batch_size = 100
+    batch_size = 10
 
     for key, value in bu_recorder.items():
         value['scores'] = list()
@@ -815,7 +731,7 @@ def get_GMM_scores(scr_model, GMM_recorder, root_dir, num_layers=15, num_classes
                 gmm_model = pickle.load(f)
             GMM_recorder[id_layer]['model'] = gmm_model
     
-    batch_size = 100
+    batch_size = 10
     for key in keys:
         value = GMM_recorder[key]
         total = 0

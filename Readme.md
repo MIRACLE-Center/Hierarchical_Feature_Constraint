@@ -6,9 +6,15 @@ The source code of paper "A Hierarchical Feature Constraint to Camouflage Medica
 
 ## Abstract
 
-Deep neural networks for medical images are extremely vulnerable to adversarial examples (AEs), which poses security concerns on clinical decision-making. Recent findings have shown that existing medical AEs are easy to detect in feature space. To better understand this phenomenon, we thoroughly investigate the characteristic of traditional medical AEs in feature space. Specifically, we first perform a stress test to reveal the vulnerability of medical images and compare them to natural images. Then, we theoretically prove that the existing adversarial attacks manipulate the prediction by continuously optimizing the vulnerable representations in a fixed direction, leading to outlier representations in feature space. Interestingly, we find this vulnerability is a double-edged sword that can be exploited to help hide AEs in the feature space. We propose a novel hierarchical feature constraint (HFC) as an add-on to existing white-box attacks, which encourages hiding the adversarial representation in the normal feature distribution. We evaluate the proposed method on two public medical image datasets, namely {Fundoscopy} and {Chest X-Ray}. Experimental results demonstrate the superiority of our HFC as it bypasses an array of state-of-the-art adversarial medical AEs detector more efficiently than competing adaptive attacks.
+Deep learning based methods for medical images can be easily compromised by adversarial examples (AEs), posing a great security flaw on clinical decision making. It has been discovered that conventional medical AEs are easy to distinguish in the feature space, resulting in accurate reactive defenses. To better understand this phenomenon and rethink the reliability of reactive defenses, we thoroughly investigate the characteristic of conventional medical AEs. Specifically, we first theoretically prove that the conventional adversarial attacks change the outputs by continuously optimizing vulnerable features in a fixed direction, thereby leading to outlier representations in the feature space. Then, a stress test is conducted to reveal the vulnerability of medical images, by comparing with natural images. Interestingly, this vulnerability is a double-edged sword, which can be exploited to hide AEs.
+We then propose a simple-yet-effective hierarchical feature constraint (HFC), a novel add-on to conventional white-box attacks, which assists to hide the adversarial feature in the target feature distribution. The proposed method is evaluated on three medical datasets, both 2D and 3D, with different modalities. The experimental results demonstrate the superiority of HFC, \emph{i.e.,} it bypasses an array of state-of-the-art adversarial medical AE detectors more efficiently than competing adaptive attacks.
 
-## Effects and command of each python file:
+## Download datsets
+Download Fundoscopy (APTOS) or Chest X-ray (CXR) to ./datasets/
+- APTOS: https://www.kaggle.com/c/aptos2019-blindness-detection
+- Chest X-ray: https://www.kaggle.com/datasets/paultimothymooney/chest-xray-pneumonia
+
+## To launch the HFC attack, please run each python file:
 
 - train.py : Train CNN classifier 
 
@@ -18,28 +24,35 @@ Deep neural networks for medical images are extremely vulnerable to adversarial 
 
   ```bash
   mkdir runs_APTOS
+  mkdir runs_CXR
+  ```
+
+  ```bash
   python train.py -a resnet50 -n resnet50 --dataset aptos -b 64 --lr 0.0003
   ```
 
 - gen_base_adv.py : Generate adversarial examples 
 
-  -n name = -a arch
+  -a name of architechture: resnet50 or vgg16
 
-  attacks: I_FGSM FGSM MI_FGSM PGD CW (after setting confidence score)
+  attacks: I_FGSM FGSM MI_FGSM TI-FGSM DI-FGSM PGD CW
 
-  perturbation-type: Linf L2  perturbation-size: 1 2 3 4 5 .. / 256
+  perturbation-type: L_inf 
+  
+  perturbation-size: 1 2 3 4 5 .. / 256
+
 
   ```bash
-  python gen_base_adv.py -a resnet50 --dataset APTOS --attack I_FGSM_Linf_1
+  python gen_base_adv.py -a resnet50 --dataset APTOS --attack I_FGSM_Linf_1 (DI_FGSM_Linf_1, etc)
   ```
 
 - extract_features.py: Train adversarail detectors and save as pickle files.
 
-  -n name = -a arch
+  -a arch resnet50 or vgg16
 
   attack: The specified adversarail attack (generated and stored by gen_base_adv.py)
 
-  need to generate Noise_Linf_2 firstly:
+  Please generate Noise_Linf_2 firstly:
   ```bash
   python gen_base_adv.py -a resnet50 --dataset APTOS --attack Noise_Linf_2
   ```
@@ -53,30 +66,44 @@ Deep neural networks for medical images are extremely vulnerable to adversarial 
   -n name = -a arch; -y number of components
 
   ```bash
-  python get_GMM.py -a resnet50 --dataset APTOS -y 2
+  python get_GMM.py -a resnet50 --dataset APTOS -y 64
   ```
 
-- gmm_attack.py : attack with HFC plug-in term, generate AEs with HFC and load detectors trained by extract_features.py
+- HFC_Attack.py : attack with HFC plug-in term, generate AEs with HFC and load detectors trained by extract_features.py
 
-  --detector: which detectors are used to detect adversarail examples
+  --detector: the detectors trained by whitch attack are used to detect adversarail examples. The detectors containes KD, LID, MAHA, SVM, DNN, and BU.
 
   ```bash
-  python gmm_attack.py -a resnet50 --dataset APTOS --attack I_FGSM_Linf_1 --detector I_FGSM_Linf_1
+  python HFC_Attack.py -a resnet50 --dataset APTOS --attack I_FGSM_Linf_1 --detector I_FGSM_Linf_1
   ```
 
 ## Other python files:
 
-- eval.py : test the performances of HFC (need to generate adversarial examples of HFC first)
+- eval.py : test the performances of HFC (Please generate adversarial examples of HFC first.)
 - saver.py utils.py network.py vgg.py resnet.py : utils
+
+## For OOD detection:
+
+  ```bash
+  python test_ood.py --dataset APTOS
+  ```
+
+## Argments:
+
+- --dataset: ATPOS and CXR for fundooscopy and Cest X-Ray, respectively
+- --attack: PGD_Linf_1: PGD attack with perturbation budget Linf=1
+
 
 ## Citation
 If our work is useful to you, please cite our paper as:
 
 ```latex
-@artical{qsyao2020landmarkattack,
-  title={Miss the Point: Targeted Adversarial Attack on Multiple Landmark Detection},
-  author={Qingsong Yao, Zecheng He, Yi Lin, Kai Ma, Yefeng Zheng, and S. Kevin Zhou},
-  booktitle={A Hierarchical Feature Constraint to Camouflage Medical Adversarial Attacks},
-  year={2021}
+@inproceedings{yao2020hierarchical,
+  title={A hierarchical feature constraint to camouflage medical adversarial attacks},
+  author={Yao, Qingsong and He, Zecheng and Lin, Yi and Ma, Kai and Zheng, Yefeng and Zhou, S Kevin},
+  booktitle={International Conference on Medical Image Computing and Computer-Assisted Intervention},
+  pages={36--47},
+  year={2021},
+  organization={Springer}
 }
 ```

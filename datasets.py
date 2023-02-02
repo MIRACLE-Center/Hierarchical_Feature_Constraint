@@ -1,5 +1,10 @@
-import os
+import SimpleITK as sitk
+from SimpleITK.SimpleITK import Normalize
+import numpy as np
 import csv
+import os
+import traceback
+import random
 from PIL import Image
 from tqdm import tqdm 
 import numpy as np
@@ -44,227 +49,229 @@ def unpack(array):
     ret = [[id, array['label'][id]] for id in range(lenth)]
     return ret
 
-# class Cifar(Dataset):
-#     def __init__(self, root_pth='/apdcephfs/share_1290796/qingsongyao/SecureMedIA/dataset/cifar/',\
-#         mode='train', num_fold=0, targeted=False, rand_pairs=False, target_class=0, arch=None):
-#         self.num_classes = 10
-#         self.num_classes_selected = 10
-#         self.root_pth = root_pth
-#         transform_list = list()
-#         transform_list.append(transforms.Resize(32))
-#         if mode == 'train':
-#             transform_list.append(transforms.RandomCrop(32))
-#             transform_list.append(transforms.RandomHorizontalFlip())
-#             transform_list.append(transforms.RandomVerticalFlip())
-#         else:
-#             transform_list.append(transforms.CenterCrop(32))
-#         transform_list.append(transforms.ToTensor())
-#         transform_list.append(transforms.Normalize(mean=[0.5, 0.5, 0.5],\
-#                                     std=[0.5, 0.5, 0.5]))
-#         self.transform = transforms.Compose(transform_list)
+def load_image_to_numpy_array(file_path):
+    try:
+        # load the data once
+        itk_img = sitk.ReadImage(file_path)
+        img_array = sitk.GetArrayFromImage(itk_img)  # indexes are z,y,x (notice the ordering)
+        # img_array = img_array.transpose(0, 2, 1)  # take care on the sequence of axis of v_center ,transfer to x,y,z
+        img_array = itensity_normalize_one_volume(img_array)
+        img_array = np.expand_dims(img_array, axis=0)
 
-#         if mode == 'train':
-#             self.array = np.load(os.path.join(root_pth, 'train.npz'))
-#             self.image_list = unpack(self.array)
-#             self.array = self.array['img']
-#         elif mode == 'test':
-#             self.array = np.load(os.path.join(root_pth, 'test.npz'))
-#             self.image_list = unpack(self.array)
-#             self.array = self.array['img']
-#             bingo = np.load(os.path.join(f'/apdcephfs/share_1290796/qingsongyao/SecureMedIA/runs_Cifar/vgg16/correct_predicts.npy'))
-#             len_raw = len(self.image_list)
-#             self.image_list = [self.image_list[i] for i in range(bingo.shape[0]) if bingo[i]]
-#             print(f"Drop {len_raw - len(self.image_list)} samples from test set from {len_raw}")
-#         else:
-#             self.array = np.load(os.path.join(root_pth, 'test.npz'))
-#             self.image_list = unpack(self.array)
-#             self.array = self.array['img']
-#             bingo = np.load(os.path.join(f'/apdcephfs/share_1290796/qingsongyao/SecureMedIA/runs_Cifar/vgg16/correct_predicts.npy'))
-#             len_raw = len(self.image_list)
-#             self.image_list = [self.image_list[i] for i in range(bingo.shape[0]) if bingo[i]]
-#             print(f"Drop {len_raw - len(self.image_list)} samples from test set from {len_raw}")
-#             len_image_list = len(self.image_list)
-#             split_fold = 0.310
-#             split_flag = int(len_image_list * (1 - split_fold))
-#             if mode == 'adv_train':
-#                 self.image_list = self.image_list[:split_flag]
-#             elif mode == 'adv_test':
-#                 self.image_list = self.image_list[split_flag:]
-#             else:
-#                 raise NotImplementedError   
+    except Exception as e:
+        print(" process images %s error..." % str(os.path.basename(file_path)))
+        # print(Exception, ":", e)
+        traceback.print_exc()
+    return img_array
+
+
+def Normalization(volume):
+    ######### max-min (0-1) #############
+    max = np.max(volume)
+    min = np.min(volume)
+    if max == min:
+        if max == 0:
+            return volume
+        else:
+            return volume/max
+    else:
+        volume = (volume - min) / (max - min)  # float cannot apply the compute,or array error will occur
+        return volume
+
+
+def itensity_normalize_one_volume(volume):
+    volume = volume.astype(np.float64)
+    pixels = volume[volume > 0].astype(np.float64)
+    max = pixels.max()
+    min = pixels.min()
+    out = volume
+    out[volume > 0] = (pixels - min + 0.5)/(max - min)
+    # volume[volume == 0] = 0
+    return out
+
+def ImageToTensor(img):
+    return torch.from_numpy(np.array(img, dtype=np.float32))
+
+def MaskToTensor(img):
+    return torch.from_numpy(np.array(img, dtype=np.int32)).long()
+
+class Brain(Dataset):
+    def __init__(self, root_pth='./datasets/Brain/',\
+        mode='train', num_fold=0, targeted=False, rand_pairs=False, target_class=0, arch='resnet'):
+        self.num_classes = 4
+        self.num_classes_selected = 4
+        self.training = mode == 'train'
+        self.cell_size = (30, 128, 128)
+
+        self.root_path = root_pth
+        if mode == 'train':
+            label_csv = os.path.join(root_pth, '5fold_label', 'train_5_1500.csv')
+        else:
+            label_csv = os.path.join(root_pth, '5fold_label', 'test_5_1500.csv')
+        f = open(label_csv, 'r')
+        f_csv = csv.reader(f)
+
+        self.image_list = list()
+        for raw_id, row in enumerate(f_csv):
+            self.image_list.append((os.path.join(root_pth, 'brain_CT', row[0]), \
+                int(float(row[2]))-1))
+
+        if mode == 'train':
+            pass
+        elif mode == 'test':
+            bingo = np.load(os.path.join(f'/home1/qsyao/Code_HFC/runs_Brain/resnet3d/correct_predicts.npy'))
+            len_raw = len(self.image_list)
+            self.image_list = [self.image_list[i] for i in range(bingo.shape[0]) if bingo[i]]
+            print(f"Drop {len_raw - len(self.image_list)} samples from test set from {len_raw}")
+            pass
+        else:
+            bingo = np.load(os.path.join(f'/home1/qsyao/Code_HFC/runs_Brain/resnet3d/correct_predicts.npy'))
+            len_raw = len(self.image_list)
+            self.image_list = [self.image_list[i] for i in range(bingo.shape[0]) if bingo[i]]
+            print(f"Drop {len_raw - len(self.image_list)} samples from test set from {len_raw}")
+            len_image_list = len(self.image_list)
+            split_fold = 0.310
+            split_flag = int(len_image_list * (1 - split_fold))
+            if mode == 'adv_train':
+                self.image_list = self.image_list[:split_flag]
+            elif mode == 'adv_test':
+                self.image_list = self.image_list[split_flag:]
+            else:
+                raise NotImplementedError   
         
-#         # Prepare to get one target sample from train set
-#         self.rand_pairs = rand_pairs
-#         self.class_dict = dict()
-#         for i in range(self.num_classes):
-#             self.class_dict[i] = list()
-#         for item in self.image_list:
-#             label = item[1]
-#             self.class_dict[label].append([item[0], label])
-#         if rand_pairs == 'train_single_class':
-#             self.image_list = self.class_dict[target_class]
-#             mode = 'test'
-#             self.target_image_patch = list()
-#             for item in self.class_dict[target_class]:
-#                 img_pth = item[0]
-#                 img_data = self.transform(Image.fromarray(self.array[img_pth]))
-#                 self.target_image_patch.append(img_data.unsqueeze(0))
-#             self.target_image_patch = torch.cat(self.target_image_patch)
+        # Prepare to get one target sample from train set
+        self.rand_pairs = rand_pairs
+        self.class_dict = dict()
+        for i in range(self.num_classes):
+            self.class_dict[i] = list()
+        for item in self.image_list:
+            label = item[1]
+            self.class_dict[label].append([item[0], label])
+        # for i in range(self.num_classes):
+        #     print(f'Class {i} num images {len(self.class_dict[i])}')
 
-#         pickle_pth = os.path.join(root_pth, 'target_class.pkl')
-#         self.target_class_list = {id_class:list() for id_class in range(self.num_classes)}
-#         for key in self.target_class_list.keys():
-#             self.target_class_list[key] = list(range(self.num_classes))
-#             self.target_class_list[key].remove(key)
+        if rand_pairs == 'train_single_class':
+            self.image_list = self.class_dict[target_class]
+            print(f'Mode: Train single class, num images: {len(self.image_list)} class id {target_class}')
+            mode = 'test'
+            self.target_image_patch = list()
+            for item in self.class_dict[target_class]:
+                img_pth = item[0]
+                img_data = self.load_process(img_pth)
+                self.target_image_patch.append(img_data.unsqueeze(0))
+            self.target_image_patch = torch.cat(self.target_image_patch)
 
-#         if not os.path.exists(pickle_pth) or False:
-#             assert(mode == 'test' and rand_pairs == 'targeted_attack')
-#             print("Set target class to {}".format(pickle_pth))
-#             with open(pickle_pth, 'wb') as f:
-#                 self.attack_list = list()
-#                 self.class_selected_list = {_:[] for _ in range(self.num_classes)}
-#                 for item in self.image_list:
-#                     id_class = item[1]
-#                     rand_class = random.choice(self.target_class_list[id_class])
-#                     self.attack_list.append([item[0], rand_class])
-#                     self.class_selected_list[rand_class].append(item[0])
-#                 pickle.dump([self.attack_list, self.class_selected_list], f)
-#         with open(pickle_pth, 'rb') as f:
-#             logging.info("Load attack list and target class list from {}".format(pickle_pth))
-#             self.attack_list, self.class_selected_list = pickle.load(f)
+        pickle_pth = os.path.join(root_pth, 'target_class.pkl')
+        self.target_class_list = {id_class:list() for id_class in range(self.num_classes)}
+        for key in self.target_class_list.keys():
+            self.target_class_list[key] = list(range(self.num_classes))
+            self.target_class_list[key].remove(key)
 
-#         # Get class_spcific
-#         if rand_pairs == 'specific':
-#             assert(mode != 'train')
-#             self.target_class = target_class
-#             # self.temp_list = [[item, target_class] for item in self.class_selected_list[target_class]]
-#             self.temp_list = []
-#             for item in self.image_list:
-#                 if item[0] in self.class_selected_list[target_class]:
-#                     self.temp_list.append([item[0], target_class])
-#             self.image_list = self.temp_list
+        if not os.path.exists(pickle_pth) or True:
+            print("Set target class to {}".format(pickle_pth))
+            with open(pickle_pth, 'wb') as f:
+                self.attack_list = list()
+                self.class_selected_list = {_:[] for _ in range(self.num_classes)}
+                for item in self.image_list:
+                    id_class = item[1]
+                    rand_class = random.choice(self.target_class_list[id_class])
+                    self.attack_list.append([item[0], rand_class])
+                    self.class_selected_list[rand_class].append(item[0])
+                pickle.dump([self.attack_list, self.class_selected_list], f)
+        with open(pickle_pth, 'rb') as f:
+            logging.info("Load attack list and target class list from {}".format(pickle_pth))
+            self.attack_list, self.class_selected_list = pickle.load(f)
+
+        # Get class_spcific
+        if rand_pairs == 'specific':
+            assert(mode != 'train')
+            self.target_class = target_class
+            # self.temp_list = [[item, target_class] for item in self.class_selected_list[target_class]]
+            self.temp_list = []
+            for item in self.image_list:
+                if item[0] in self.class_selected_list[target_class]:
+                    self.temp_list.append([item[0], target_class])
+            self.image_list = self.temp_list
         
-#         if rand_pairs == 'targeted_attack':
-#             assert(mode != 'train')
-#             self.image_list = self.attack_list
+        if rand_pairs == 'targeted_attack':
+            assert(mode != 'train')
+            self.image_list = self.attack_list
         
-#         self.rand_pairs = rand_pairs
+        self.rand_pairs = rand_pairs
     
-#         self.targeted = targeted
-#         self.target_class = target_class
+        self.targeted = targeted
+        self.target_class = target_class
 
-#     def __len__(self):
-#         return len(self.image_list)
-    
-#     def __getitem__(self, index):
-#         if self.rand_pairs == 'train_single_class':
-#             img_data = self.target_image_patch[index]
-#             id_target = np.random.randint(0, len(self.target_image_patch))
-#             target_data = self.target_image_patch[id_target]
-#             return img_data, self.target_class, target_data
-#         item = self.image_list[index]
+    def __len__(self):
+        return len(self.image_list)
 
-#         img_pth = item[0]
-#         img_data = self.transform(Image.fromarray(self.array[img_pth]))
+    def load_process(self, img_path):
+        img = load_image_to_numpy_array(img_path)
+        # img = Normalization(img)
+        img = ImageToTensor(img)
+        return img
 
-#         label = item[1]
-#         return img_data, torch.tensor(label).long()
+    def __getitem__(self, index):
+        if self.rand_pairs == 'train_single_class':
+            img_data = self.target_image_patch[index]
+            id_target = np.random.randint(0, len(self.target_image_patch))
+            target_data = self.target_image_patch[id_target]
+            return img_data, self.target_class, target_data
+        item = self.image_list[index]
 
-#     def __init__(self, root_pth='/apdcephfs/share_1290796/qingsongyao/ImageNet/',\
-#         mode='train', num_fold=0, targeted=False, rand_pairs=False, target_class=0, arch=None):
-#         self.num_classes = 1000
+        img_pth = item[0]
+        img_data = self.load_process(img_pth)
 
-#         self.plan_pkl_pth = os.path.join(root_pth, 'plans.pkl')
-#         self.train_folder = os.path.join(root_pth, 'ImageNet', '292_tiger')
-#         self.test_folder = os.path.join(root_pth, 'eval')
-#         with open(self.plan_pkl_pth, 'rb') as f:
-#             self.plan = pickle.load(f)
-#         # train_lists = [[os.path.join(self.train_folder, item), 292] for item in os.listdir(self.train_folder)]
-#         # test_lists = [[os.path.join(self.test_folder, item), 292] for item in os.listdir(self.test_folder)][:1010]
-#         # self.plan = dict()
-#         # self.plan['test'] = test_lists
-#         # self.plan['train'] = train_lists
-#         # with open(os.path.join(root_pth, 'plans.pkl'), 'wb') as f:
-#         #     pickle.dump(self.plan, f)
-#         # import ipdb; ipdb.set_trace()
+        label = item[1]
+        return img_data, torch.tensor(label).long()
 
-#         transform_list = list()
-#         transform_list.append(transforms.Resize(344))
-#         if mode == 'train':
-#             transform_list.append(transforms.RandomCrop(299))
-#             transform_list.append(transforms.RandomHorizontalFlip())
-#             transform_list.append(transforms.RandomVerticalFlip())
-#         else:
-#             transform_list.append(transforms.CenterCrop(299))
-#         transform_list.append(transforms.ToTensor())
-#         transform_list.append(transforms.Normalize(mean=[0.5, 0.5, 0.5],\
-#                                     std=[0.5, 0.5, 0.5]))
-#         self.transform = transforms.Compose(transform_list)
-
-#         # No training 
-#         # Both targeted_attack
-#         if mode == 'train':
-#             self.image_list = self.plan['train']
-#         elif mode == 'test':
-#             self.image_list = self.plan['test']
-
-#     def __len__(self):
-#         return len(self.image_list)
-    
-#     def __getitem__(self, index):
-#         item = self.image_list[index]
-#         label = int(item[1])
-#         img_pth = item[0]
-#         img_data = self.transform(Image.open(img_pth).convert('RGB'))
-        
-#         return img_data, label
-
-# class CXR(Dataset):
-    def __init__(self, root_pth='/apdcephfs/share_1290796/qingsongyao/SecureMedIA/dataset/cxr/',\
-        mode='train', num_fold=0, targeted=False, rand_pairs=False, target_class=0, arch='vgg16'):
+class CXR(Dataset):
+    def __init__(self, root_pth='./datasets/cxr/',\
+        mode='train', num_fold=0, targeted=False, rand_pairs=None, target_class=0, arch='vgg16'):
         self.num_classes = 2
         self.num_classes_selected = 2
         targeted = False
 
         self.image_list = list()
         self.plan_pkl_pth = os.path.join(root_pth, 'plans.pkl')
+        
+        if not os.path.exists(self.plan_pkl_pth):
+            logging.warning("Generate 8-2 split to {}".format(self.plan_pkl_pth))
+            train_folder_h = os.path.join(root_pth, 'train', 'NORMAL')
+            train_healthy = [[os.path.join(train_folder_h, item), 0] for item in os.listdir(train_folder_h)]
+            test_folder_h = os.path.join(root_pth, 'test', 'NORMAL')
+            test_healthy = [[os.path.join(test_folder_h, item), 0] for item in os.listdir(test_folder_h)]
+            train_folder_p = os.path.join(root_pth, 'train', 'PNEUMONIA')
+            train_pneumonia = [[os.path.join(train_folder_p, item), 1] for item in os.listdir(train_folder_p)]
+            test_folder_p = os.path.join(root_pth, 'test', 'PNEUMONIA')
+            test_pneumonia = [[os.path.join(test_folder_p, item), 1] for item in os.listdir(test_folder_p)]
+            train_healthy.extend(train_pneumonia)
+            test_healthy.extend(test_pneumonia)
+            random.shuffle(train_healthy)
+            random.shuffle(test_healthy)
+            test_healthy.extend(train_healthy[-550:])
+            train_healthy = train_healthy[:-550]
+            self.plan = dict()
+            self.plan['test'] = test_healthy
+            self.plan['train'] = train_healthy
+            with open(os.path.join(root_pth, 'plans.pkl'), 'wb') as f:
+                pickle.dump(self.plan, f)
+        
         with open(self.plan_pkl_pth, 'rb') as f:
             self.plan = pickle.load(f)
-        # train_folder_h = os.path.join(root_pth, 'train', 'NORMAL')
-        # train_healthy = [[os.path.join(train_folder_h, item), 0] for item in os.listdir(train_folder_h)]
-        # test_folder_h = os.path.join(root_pth, 'test', 'NORMAL')
-        # test_healthy = [[os.path.join(test_folder_h, item), 0] for item in os.listdir(test_folder_h)]
-        # train_folder_p = os.path.join(root_pth, 'train', 'PNEUMONIA')
-        # train_pneumonia = [[os.path.join(train_folder_p, item), 1] for item in os.listdir(train_folder_p)]
-        # test_folder_p = os.path.join(root_pth, 'test', 'PNEUMONIA')
-        # test_pneumonia = [[os.path.join(test_folder_p, item), 1] for item in os.listdir(test_folder_p)]
-        # train_healthy.extend(train_pneumonia)
-        # test_healthy.extend(test_pneumonia)
-        # random.shuffle(train_healthy)
-        # random.shuffle(test_healthy)
-        # test_healthy.extend(train_healthy[-550:])
-        # train_healthy = train_healthy[:-550]
-        # self.plan = dict()
-        # self.plan['test'] = test_healthy
-        # self.plan['train'] = train_healthy
-        # with open(os.path.join(root_pth, 'plans.pkl'), 'wb') as f:
-        #     pickle.dump(self.plan, f)
         # # import ipdb; ipdb.set_trace()        
         self.img_dir_pth = os.path.join(root_pth, 'images')
-        # print(len(self.plan['test']))
-        # print(len(self.plan['train']))
 
         transform_list = list()
-        transform_list.append(transforms.Resize(330))
+        transform_list.append(transforms.Resize(280))
         if mode == 'train':
-            transform_list.append(transforms.RandomCrop(299))
+            transform_list.append(transforms.RandomCrop(256))
             transform_list.append(transforms.RandomHorizontalFlip())
-            transform_list.append(transforms.RandomVerticalFlip())
         else:
-            transform_list.append(transforms.CenterCrop(299))
+            transform_list.append(transforms.CenterCrop(256))
         transform_list.append(transforms.ToTensor())
-        transform_list.append(transforms.Normalize(mean=[0.5, 0.5, 0.5],\
-                                    std=[0.5, 0.5, 0.5]))
+        transform_list.append(transforms.Normalize(mean=[0, 0, 0],\
+                                    std=[1, 1, 1]))
         self.transform = transforms.Compose(transform_list)
 
         # # resize 
@@ -279,13 +286,13 @@ def unpack(array):
             self.image_list = self.plan['test']
             if rand_pairs is not None:
                 len_raw = len(self.image_list)
-                bingo = np.load(os.path.join(f'/apdcephfs/share_1290796/qingsongyao/SecureMedIA/runs_CXR/{arch}/correct_predicts.npy'))
+                bingo = np.load(os.path.join(f'./runs_CXR/resnet50/correct_predicts.npy'))
                 self.image_list = [self.image_list[i] for i in range(bingo.shape[0]) if bingo[i]]
                 print(f"Drop {len_raw - len(self.image_list)} samples from test set from {len_raw}")
         else:
             self.image_list = self.plan['test']
             len_raw = len(self.image_list)
-            bingo = np.load(os.path.join(f'/apdcephfs/share_1290796/qingsongyao/SecureMedIA/runs_CXR/{arch}/correct_predicts.npy'))
+            bingo = np.load(os.path.join(f'./runs_CXR/resnet50/correct_predicts.npy'))
             self.image_list = [self.image_list[i] for i in range(bingo.shape[0]) if bingo[i]]
             print(f"Drop {len_raw - len(self.image_list)} samples from test set from {len_raw}")
             len_image_list = len(self.image_list)
@@ -371,7 +378,7 @@ def unpack(array):
         target_images = [self.transform(Image.open(target_list[i][0]).convert('RGB')).cuda().unsqueeze(0)\
                  for i in range(num_samples)]
         return torch.cat(target_images)
-
+    
     def __len__(self):
         return len(self.image_list)
     
@@ -391,8 +398,8 @@ def unpack(array):
         return img_data, label
 
 class APTOS(Dataset):
-    def __init__(self, root_pth='/home1/qsyao/dataset/APTOS/',\
-        mode='train', num_fold=0, targeted=False, rand_pairs=False, target_class=0):
+    def __init__(self, root_pth='./datasets/APTOS/',\
+        mode='train', num_fold=0, targeted=False, rand_pairs=None, target_class=0, arch='resnet50'):
 
         self.num_classes = 2
         self.num_classes_selected = 2
@@ -417,7 +424,6 @@ class APTOS(Dataset):
         self.raw_dir_pth = os.path.join(root_pth, 'train_images')
         self.img_dir_pth = os.path.join(root_pth, 'processed_images')
         if not os.path.exists(self.img_dir_pth):
-        # if True:
             os.mkdir(self.img_dir_pth)
             files = os.listdir(self.raw_dir_pth)
             for name in tqdm(files, desc='Preprocess Resize'):
@@ -469,8 +475,17 @@ class APTOS(Dataset):
             self.image_list = split_file['train_list']
         elif mode == 'test':
             self.image_list = split_file['test_list']
+            if rand_pairs is not None:
+                len_raw = len(self.image_list)
+                bingo = np.load(os.path.join(f'./runs_APTOS/resnet50/correct_predicts.npy'))
+                self.image_list = [self.image_list[i] for i in range(bingo.shape[0]) if bingo[i]]
+                print(f"Drop {len_raw - len(self.image_list)} samples from test set from {len_raw}")
         else:
             self.image_list = split_file['test_list']
+            len_raw = len(self.image_list)
+            bingo = np.load(os.path.join(f'./runs_APTOS/resnet50/correct_predicts.npy'))
+            self.image_list = [self.image_list[i] for i in range(bingo.shape[0]) if bingo[i]]
+            print(f"Drop {len_raw - len(self.image_list)} samples from test set from {len_raw}")
             len_image_list = len(self.image_list)
             split_fold = 0.3
             split_flag = int(len_image_list * (1 - split_fold))
@@ -480,7 +495,7 @@ class APTOS(Dataset):
                 self.image_list = self.image_list[split_flag:]
             else:
                 raise NotImplementedError
-        
+        # import ipdb; ipdb.set_trace()
         # Only for try_random_pairs experiments
         self.rand_pairs = rand_pairs
         self.class_dict = dict()
@@ -512,7 +527,7 @@ class APTOS(Dataset):
             with open(pickle_pth, 'wb') as f:
                 self.attack_list = list()
                 self.class_selected_list = {_:[] for _ in range(self.num_classes)}
-                for item in split_file['test_list']:
+                for item in self.image_list:
                     id_class = int(int(item[1]) > 0)
                     rand_class = random.choice(self.target_class_list[id_class])
                     self.attack_list.append([item[0], rand_class])
@@ -586,21 +601,24 @@ class APTOS(Dataset):
         return img_data, label
 
 def get_dataloader(dataset='APTOS',\
-    mode='train', batch_size=64, num_workers=16, num_fold=0, \
-        targeted=False, rand_pairs=False, target_class=0, arch='vgg16'):
+    mode='train', batch_size=8, num_workers=16, num_fold=0, \
+        targeted=False, rand_pairs=None, target_class=0, arch='resnet50'):
     arch = arch.split('_')[0]
     # Now: Default : targeted = True
     num_workers = 24
     is_train = mode == 'train'
     if dataset == 'APTOS':
         dataset = APTOS(mode=mode, num_fold=num_fold, targeted=targeted, \
+            rand_pairs=rand_pairs, target_class=target_class, arch=arch)
+    elif dataset == 'Brain':
+        dataset = Brain(mode=mode, num_fold=num_fold, targeted=targeted, \
             rand_pairs=rand_pairs, target_class=target_class)
     elif dataset == 'CXR':
         dataset = CXR(mode=mode, num_fold=num_fold, targeted=targeted, \
-            rand_pairs=rand_pairs, target_class=target_class, arch='vgg16')
-    elif dataset == 'Cifar':
-        dataset = Cifar(mode=mode, num_fold=num_fold, targeted=targeted, \
-            rand_pairs=rand_pairs, target_class=target_class, arch='vgg16')
+            rand_pairs=rand_pairs, target_class=target_class, arch=arch)
+    # elif dataset == 'Cifar':
+    #     dataset = Cifar(mode=mode, num_fold=num_fold, targeted=targeted, \
+    #         rand_pairs=rand_pairs, target_class=target_class, arch='resnet50')
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
@@ -618,7 +636,7 @@ if __name__ == "__main__":
     #     test = test_set.__getitem__(i)
 
     # Debug Loader
-    loader = get_dataloader(dataset='APTOS', mode='train')
+    loader = get_dataloader(dataset='Brain', mode='test')
     test = loader.dataset.__getitem__(0)
     # import ipdb; ipdb.set_trace()
     # for item in tqdm(range(loader.dataset.__len__())):

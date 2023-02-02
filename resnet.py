@@ -124,10 +124,12 @@ class Bottleneck(nn.Module):
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
+        features.append(out)   
 
         out = self.conv2(out)
         out = self.bn2(out)
         out = self.relu(out)
+        features.append(out)
 
         out = self.conv3(out)
         out = self.bn3(out)
@@ -176,7 +178,7 @@ class ResNet(nn.Module):
                                        dilate=replace_stride_with_dilation[1])
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2,
                                        dilate=replace_stride_with_dilation[2])
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
         self.dropout = nn.Dropout(0.3)
 
@@ -249,7 +251,7 @@ class ResNet(nn.Module):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        features.append(x)
+        # features.append(x)
         x = self.maxpool(x)
 
         x, feature = self.layer1(x, get_features=True)

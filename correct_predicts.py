@@ -1,108 +1,68 @@
 import argparse
-import os
-import random
-import shutil
-import time
-import warnings
 from tqdm import tqdm
 import numpy as np
 
 import torch
-import torch.nn as nn
 import torch.nn.parallel
-import torch.backends.cudnn as cudnn
-import torch.distributed as dist
 import torch.optim
-import torch.multiprocessing as mp
 import torch.utils.data
 import torch.utils.data.distributed
-from torchvision.models.inception import InceptionOutputs
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
-import torchvision.models as models
+
 
 from datasets import get_dataloader
 from utils import *
 from network import *
 from saver import Saver
-import attackers
-import pickle
-
-from sklearn.metrics import cohen_kappa_score
-from sklearn.metrics import f1_score
-from sklearn.metrics import accuracy_score
-import sklearn.covariance
-from sklearn.mixture import BayesianGaussianMixture, GaussianMixture
-from copy import deepcopy
 
 
-def run(args, default_victims):
-    # root_dir = f'/apdcephfs/share_1290796/qingsongyao/temp/{args.dataset}/{args.arch}/new_GMM_{args.num_component}'
-    root_dir = os.path.join(os.getcwd(), f'runs_{args.dataset}', args.arch, f'GMM_{args.num_component}')
-    if not os.path.isdir(root_dir): os.mkdir(root_dir)
-    layer_index = args.layer_index
-    is_targeted = False
+def run(args):
     saver = Saver(args.arch, dataset=args.dataset)
-    logging.info(f'Attacking {default_victims} by {args.arch}')
 
-    test_loader = get_dataloader(dataset=args.dataset, mode='train',\
+    test_loader = get_dataloader(dataset=args.dataset, mode='test',\
         batch_size=args.batch_size, num_workers=args.workers, \
-            num_fold=args.num_fold, targeted=is_targeted, arch=args.arch)
+        num_fold=args.num_fold, targeted=True, arch=args.arch)
 
-    if 'vgg16' in args.arch:
+    if args.arch == 'vgg16':
         src_model = infer_Cls_Net_vgg(test_loader.dataset.num_classes)
-    elif 'resnet50' in args.arch:
+    elif args.arch == 'resnet50':
         src_model = infer_Cls_Net_resnet(test_loader.dataset.num_classes)
-    elif 'resnet3d' in args.arch:
+    elif args.arch == 'resnet3d':
         src_model = infer_Cls_Net_resnet3d(test_loader.dataset.num_classes)
+    else:
+        raise NotImplementedError
+
     src_model = saver.load_model(src_model, args.arch)
     src_model.eval()
     src_model = src_model.cuda()
 
-
-    def fit(id_class, id_layer, features):
-        print(f'Start to fit {id_class} on layer {id_layer}')
-        gmm_model = BayesianGaussianMixture(n_components=args.num_component, n_init=2, max_iter=1000)
-        gmm_model.fit(features)
-        npz_name = os.path.join(root_dir, f'Layer_{id_layer}_class_{id_class}.npz')
-        np.savez(npz_name, means_=gmm_model.means_,\
-            precision_cholesky_=gmm_model.precisions_cholesky_,\
-            weights_=gmm_model.weights_)
-        print(f'Fit {id_class} on layer {id_layer} done save as {npz_name}')
-
-    from multiprocessing import Process
-    for id_class in range(0, test_loader.dataset.num_classes_selected):
-        features_layer = {id:[] for id in range(0, src_model.num_cnn)}
-        test_loader = get_dataloader(dataset=args.dataset, mode='train',\
-            batch_size=4, num_workers=args.workers, \
-            rand_pairs='train_single_class', target_class=id_class, arch=args.arch)
-        feature_list = list()
-        # for i, (images, target) in enumerate(test_loader):
-        for repeat in range(1):
-            for i, (images, target, target_data) in enumerate(tqdm(test_loader)):
-                images = images.cuda()
-                with torch.no_grad():
-                    target_feature = src_model.feature_list(images)[1]
-                    # import ipdb; ipdb.set_trace()
-                    for id in range(0, src_model.num_cnn):
-                        if '3d' not in args.arch:
-                            features_layer[id].append(target_feature[id].mean(-1).mean(-1).detach().cpu().numpy())
-                        else:
-                            features_layer[id].append(target_feature[id].mean(-1).mean(-1).mean(-1).detach().cpu().numpy())
-        for id in range(0, src_model.num_cnn):
-            features_layer[id] = np.concatenate(features_layer[id])
-
-        for id_layer in range(0, src_model.num_cnn):
-            fit(id_class, id_layer, features_layer[id_layer])
-    
+    bingo = list()
+    diff_logits = list()
+    pred_list = list()
+    target_list = list()
+    for i, (images, target) in enumerate(tqdm(test_loader)):
+        images = images.cuda()
+        logits = src_model(images).detach()
+        pred_value = torch.softmax(logits, dim=-1)[:, 1]
+        target_list.append(target.numpy())
+        pred_list.append(pred_value.cpu().numpy())
+        pred = logits.argmax(1).cpu().detach()
+        diff = torch.abs(logits[:,0] - logits[:,1]).cpu() * (pred == target)
+        diff_logits.append(diff.numpy())
+        bingo.append((pred == target).numpy())
+    bingo = np.concatenate(bingo)
+    np.save(f'runs_{args.dataset}/{args.arch}/correct_predicts.npy', bingo)
+    diff = np.concatenate(diff_logits)
+    pred_list = np.concatenate(pred_list)
+    target_list = np.concatenate(target_list)
+    # auc = roc_auc_score(target_list, pred_list)
+    print(f'Mean logits on dataset {args.dataset} by network {args.arch} : {diff.sum()/bingo.sum()} ACC : {bingo.sum() / bingo.shape[0]}')
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Training Code')
     parser.add_argument('--root_dir', metavar='DIR', default='/apdcephfs/share_1290796/qingsongyao/SecureMedIA/dataset/aptos2019/',
                         help='path to dataset')
-    parser.add_argument('-n', '--run_name', default='vgg16')
     parser.add_argument('-a', '--arch', metavar='ARCH', default='vgg16')
-    parser.add_argument('-j', '--workers', default=64, type=int, metavar='N',
+    parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
     parser.add_argument('--epochs', default=2000, type=int, metavar='N',
                         help='number of total epochs to run')
@@ -144,10 +104,10 @@ if __name__ == "__main__":
                         help='Fold Number')
     parser.add_argument('-i', '--layer_index', default=7, type=int,
                         help='Fold Number')
-    parser.add_argument('-y', '--num_component', default=2, type=int,
+    parser.add_argument('--dataset', default='CXR', type=str,
                         help='Fold Number')
-    parser.add_argument('--dataset', default='APTOS', type=str,
-                        help='Fold Number')
+    parser.add_argument('--attack', default='I_FGSM_Linf_4', type=str,
+                        help='Fold Number')                        
     parser.add_argument('--multiprocessing-distributed', action='store_true',
                         help='Use multi-processing distributed training to launch '
                             'N processes per node, which has N GPUs. This is the '
@@ -155,12 +115,5 @@ if __name__ == "__main__":
                             'multi node data parallel training')
     args = parser.parse_args()
 
-    default_victims = {
-                       'vgg16_bn':'vgg16_bn', 
-                    #    'googlenet':'googlenet',
-                    #    'inception_v3':'inception_v3',
-                    #    'resnet50':'resnet50',
-                    }
+    run(args)
 
-    # print(f"Run Attacking {args.run_name} on Jizhi against ")
-    run(args, default_victims)
