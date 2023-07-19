@@ -1,0 +1,9 @@
+torch==1.4.0
+torchvision==0.5.0+cu100
+numpy==1.18.5
+SimpleITK==1.2.4
+Pillow==7.0.0
+opencv-python==4.3.0.36
+scipy==1.4.1
+sklearn
+matplotlib==3.2.2

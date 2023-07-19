@@ -15,6 +15,7 @@ import cv2
 import pickle
 import random
 import logging
+from scipy.interpolate import interpn
 import copy
 import torchvision.transforms as transforms
 
@@ -28,7 +29,29 @@ targeted attack: inverse attack use all of the datasets, inverse the lable (bina
 specific: train and break detector for specific class
 train_single_class : get image from the targeted class
 '''
+def interpolate_3d(arr):
+    # 定义缩小比例
+    scale_factor = 0.5
 
+    # 计算插值后的新形状
+    new_shape = tuple(int(dim * scale_factor) for dim in arr.shape)
+
+    # 创建用于插值的坐标网格
+    x_coords = np.linspace(0, arr.shape[0]-1, arr.shape[0])
+    y_coords = np.linspace(0, arr.shape[1]-1, arr.shape[1])
+    z_coords = np.linspace(0, arr.shape[2]-1, arr.shape[2])
+
+    # 计算插值后的坐标
+    x_new = np.linspace(0, arr.shape[0]-1, new_shape[0])
+    y_new = np.linspace(0, arr.shape[1]-1, new_shape[1])
+    z_new = np.linspace(0, arr.shape[2]-1, new_shape[2])
+    coords = np.meshgrid(x_new, y_new, z_new, indexing='ij')
+    coords = np.stack(coords, axis=-1)
+
+    # 进行线性插值
+    interp_arr = interpn((x_coords, y_coords, z_coords), arr, coords)
+
+    return interp_arr
 
 def generate_spatial_bounding_box(img, channel_indexes=None, margin=0):
     assert isinstance(margin, int), "margin must be int type."
@@ -62,7 +85,8 @@ def load_image_to_numpy_array(file_path):
         print(" process images %s error..." % str(os.path.basename(file_path)))
         # print(Exception, ":", e)
         traceback.print_exc()
-    return img_array
+    img_array = interpolate_3d(img_array[0])
+    return img_array[np.newaxis, :]
 
 
 def Normalization(volume):
@@ -119,10 +143,11 @@ class Brain(Dataset):
         if mode == 'train':
             pass
         elif mode == 'test':
-            bingo = np.load(os.path.join(f'/home1/qsyao/Code_HFC/runs_Brain/resnet3d/correct_predicts.npy'))
-            len_raw = len(self.image_list)
-            self.image_list = [self.image_list[i] for i in range(bingo.shape[0]) if bingo[i]]
-            print(f"Drop {len_raw - len(self.image_list)} samples from test set from {len_raw}")
+            if rand_pairs is not None:
+                bingo = np.load(os.path.join(f'/home1/qsyao/Code_HFC/runs_Brain/resnet3d/correct_predicts.npy'))
+                len_raw = len(self.image_list)
+                self.image_list = [self.image_list[i] for i in range(bingo.shape[0]) if bingo[i]]
+                print(f"Drop {len_raw - len(self.image_list)} samples from test set from {len_raw}")
             pass
         else:
             bingo = np.load(os.path.join(f'/home1/qsyao/Code_HFC/runs_Brain/resnet3d/correct_predicts.npy'))
@@ -619,6 +644,7 @@ def get_dataloader(dataset='APTOS',\
     # elif dataset == 'Cifar':
     #     dataset = Cifar(mode=mode, num_fold=num_fold, targeted=targeted, \
     #         rand_pairs=rand_pairs, target_class=target_class, arch='resnet50')
+    dataset.__getitem__(0)
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,

@@ -18,12 +18,14 @@ from network import *
 from saver import Saver
 from sklearn.metrics import accuracy_score, roc_auc_score
 
+import pickle
 import random
 import PIL
 
 def add_rand_mask(images, length=50):
     rand_x, rand_y = random.randint(70, 180), random.randint(70, 180)
     images[:, :, rand_y:rand_y+length, rand_x:rand_x+length] = 0
+    images[:, 1:3, rand_y:rand_y+length, rand_x:rand_x+length] = 1
     return images
 
 def to_PIL(tensor):
@@ -105,7 +107,10 @@ def run(args, length=10):
     
     total_clean_scores = []
     total_ood_scores = []
+    total_false_predict = 0
+    total_num = 0
     for id_class in range(2):
+        id_class = 1 - id_class
         test_loader = get_dataloader(dataset=args.dataset, arch=args.arch, mode='adv_test',\
             batch_size=args.batch_size, num_workers=4, \
             num_fold=args.num_fold, targeted=is_targeted, rand_pairs='specific', target_class=id_class)
@@ -118,7 +123,7 @@ def run(args, length=10):
             pre_chol_list.append(torch.from_numpy(gmm_model['precision_cholesky_']).cuda().float())
             weight_list.append(torch.from_numpy(gmm_model['weights_']).cuda().float())
 
-        for i, (images, target) in enumerate(tqdm(test_loader, desc=f'Class {1 - id_class}')):
+        for i, (images, target) in enumerate(tqdm(test_loader, desc=f'Class {1 - id_class} mask length {length}')):
             if True:
                 images = images.cuda()
                 target = target.cuda()
@@ -131,15 +136,18 @@ def run(args, length=10):
             
             hfc_scores = loss_fn_(src_model.feature_list(images)[1], [target, [mean_list, pre_chol_list, weight_list]])
             
-            ood_images = add_rand_mask(images, length=length)
-            # to_PIL(ood_images[0]).save('OOD.png')
-            bingo_ood = src_model(ood_images).argmax(dim=1).detach().cpu().item() == 1 - target
-            if not bingo_ood:
-                print('False predicted !')
-                continue
-            ood_hfc_scores = loss_fn_(src_model.feature_list(ood_images)[1], [target, [mean_list, pre_chol_list, weight_list]])
-            total_ood_scores.append(ood_hfc_scores)
-            total_clean_scores.append(hfc_scores)
+            for i in range(2):
+                total_num += 1
+                ood_images = add_rand_mask(images, length=length)
+                to_PIL(ood_images[0]).save('OOD.png')
+                import ipdb; ipdb.set_trace()
+                bingo_ood = src_model(ood_images).argmax(dim=1).detach().cpu().item() == 1 - target
+                if not bingo_ood:
+                    total_false_predict += 1
+                    continue
+                ood_hfc_scores = loss_fn_(src_model.feature_list(ood_images)[1], [target, [mean_list, pre_chol_list, weight_list]])
+                total_ood_scores.append(ood_hfc_scores)
+                total_clean_scores.append(hfc_scores)
     
     total_ood_scores = np.stack(total_ood_scores)
     total_clean_scores = np.stack(total_clean_scores)
@@ -147,13 +155,14 @@ def run(args, length=10):
     gt = np.stack([np.zeros([number]), np.ones([number])])
     total_clean_scores = total_clean_scores.transpose()
     total_ood_scores = total_ood_scores.transpose()
+    acc = total_false_predict / total_num
 
     for i in range(47, 48):
         pred = np.stack([total_clean_scores[i], total_ood_scores[i]])
         auc = roc_auc_score(gt, pred)
-        print(f'Layer {i+1} AUC {auc}')
+        print(f'Layer {i+1} AUC {auc}, ACC {acc}')
 
-    return auc
+    return auc, acc
 
     # calculate metrics
     
@@ -190,21 +199,27 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     length_setting = [1, 2, 4, 8, 16, 32, 64]
+    length_setting = [32]
     auc_list = []
+    acc_list = []
     for i in length_setting:
-        det_auc = run(args, i)
+        det_auc, acc = run(args, i)
         auc_list.append(det_auc)
+        acc_list.append(acc)
     auc_list = np.array(auc_list)
+    acc_list = np.array(acc_list)
     length_setting = np.array(length_setting)
 
-    # rewrite = True
-    # save_path = f'temp.pkl'
-    # if not os.path.isfile(save_path) or rewrite:
-    #     with open(save_path, 'wb') as f:
-    #         pickle.dump([length_setting, auc_list], f)
-    # else:
-    #     with open(save_path, 'rb') as f:
-    #         ength_setting, auc_list = pickle.load(f)
+    import ipdb; ipdb.set_trace()
+
+    rewrite = True
+    save_path = f'temp_{args.dataset}.pkl'
+    if not os.path.isfile(save_path) or rewrite:
+        with open(save_path, 'wb') as f:
+            pickle.dump([length_setting, auc_list, acc_list], f)
+    else:
+        with open(save_path, 'rb') as f:
+            ength_setting, auc_list = pickle.load(f)
 
     
 

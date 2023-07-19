@@ -5,6 +5,7 @@ runs_APTOS/
 tsne/
 runs_CXR/
 runs_Brain/
+runs_Brain_original/
 torchadver/
 advertorch/ 
 *.png
