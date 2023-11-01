@@ -129,7 +129,7 @@ def run(args, tumor_type, num_tumor):
 
         # # for visualization
         # visualize_image, _ = test_loader.dataset.__getitem__(0)
-        # ood_images = run_synthesis(visualize_image, tumor_type, num_tumor)
+        # ood_images = run_synthesis(visualize_image, tumor_type, num_tumor, args.dataset)
         # to_PIL(ood_images[0]).save(os.path.join('temp_visual', f'{args.dataset}_{tumor_type}_{num_tumor}.png'))
         # return 0, 0
 
@@ -148,7 +148,7 @@ def run(args, tumor_type, num_tumor):
             
             for i in range(10):
                 total_num += 1
-                ood_images = run_synthesis(images,  tumor_type, num_tumor)
+                ood_images = run_synthesis(images,  tumor_type, num_tumor, args.dataset)
                 # to_PIL(ood_images[0]).save('OOD.png')
                 # import ipdb; ipdb.set_trace()
                 bingo_ood = src_model(ood_images).argmax(dim=1).detach().cpu().item() == 1 - target

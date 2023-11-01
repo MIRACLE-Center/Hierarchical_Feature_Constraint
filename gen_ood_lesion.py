@@ -410,7 +410,7 @@ for sigma_a in sigma_as:
 #         print(sigma_a, sigma_b, 3)
 #         index += 1 
 
-def run_synthesis(input, tumor_type, num_tumor=1):
+def run_synthesis(input, tumor_type, num_tumor=1, dataset):
     input = input.cpu().squeeze().detach().numpy()
     texture = all_data[random.randint(0, 9)]
 
@@ -422,8 +422,10 @@ def run_synthesis(input, tumor_type, num_tumor=1):
     syn_image = np.stack([syn_image, syn_image, syn_image], axis=0)
     syn_mask = np.stack([syn_mask, syn_mask, syn_mask], axis=0)
 
-    # # for CXR
-    # ret = input * (1) + syn_image * syn_mask
-    # for Fundoscopy (APTOS)
-    ret = input * (1) - syn_image * syn_mask
+    if dataset == 'CXR':
+        ret = input * (1) + syn_image * syn_mask
+    elif dataset == 'Fundoscopy':
+        ret = input * (1) - syn_image * syn_mask
+    else:
+        raise NotImplementedError
     return torch.from_numpy(ret).cuda().unsqueeze(0).float()
