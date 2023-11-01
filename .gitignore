@@ -2,12 +2,14 @@ __pycache__/
 .vscode/
 datasets/*
 runs_APTOS/
+texture/
 tsne/
 runs_CXR/
 runs_Brain/
 runs_Brain_original/
 torchadver/
-advertorch/ 
+advertorch/
+temp_visual/
 *.png
 *_jpeg.py
 *_reduce.py
@@ -22,3 +24,5 @@ gmm_attack_ab.py
 gen_base_adv_bpda.py
 test_ours.py
 adv_detectors.py
+data.mmap
+*._jpg

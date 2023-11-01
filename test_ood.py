@@ -22,6 +22,8 @@ import pickle
 import random
 import PIL
 
+from gen_ood_lesion import run_synthesis
+
 def add_rand_mask(images, length=50):
     rand_x, rand_y = random.randint(70, 180), random.randint(70, 180)
     images[:, :, rand_y:rand_y+length, rand_x:rand_x+length] = 0
@@ -29,11 +31,11 @@ def add_rand_mask(images, length=50):
     return images
 
 def to_PIL(tensor):
-    tensor = tensor.cpu().detach().numpy().transpose(1,2, 0)
+    tensor = torch.clamp(tensor, 0, 1)
+    tensor = tensor.cpu().detach().numpy().transpose(1,2,0)
     return PIL.Image.fromarray((tensor*255.0).astype(np.uint8))
 
-def run(args, length=10):
-    print(f'Mask Length: {length}')
+def run(args, tumor_type, num_tumor):
     is_targeted = False
     saver = Saver(args.arch, dataset=args.dataset)
 
@@ -105,10 +107,12 @@ def run(args, length=10):
         f'GMM_{num_component_gmm}')
     print(f'load GMM from {root_gmm}')
     
+    
     total_clean_scores = []
     total_ood_scores = []
     total_false_predict = 0
     total_num = 0
+    
     for id_class in range(2):
         id_class = 1 - id_class
         test_loader = get_dataloader(dataset=args.dataset, arch=args.arch, mode='adv_test',\
@@ -123,7 +127,13 @@ def run(args, length=10):
             pre_chol_list.append(torch.from_numpy(gmm_model['precision_cholesky_']).cuda().float())
             weight_list.append(torch.from_numpy(gmm_model['weights_']).cuda().float())
 
-        for i, (images, target) in enumerate(tqdm(test_loader, desc=f'Class {1 - id_class} mask length {length}')):
+        # # for visualization
+        # visualize_image, _ = test_loader.dataset.__getitem__(0)
+        # ood_images = run_synthesis(visualize_image, tumor_type, num_tumor)
+        # to_PIL(ood_images[0]).save(os.path.join('temp_visual', f'{args.dataset}_{tumor_type}_{num_tumor}.png'))
+        # return 0, 0
+
+        for i, (images, target) in enumerate(tqdm(test_loader, desc=f'Class {1 - id_class} tumor_type {tumor_type} num {num_tumor}')):
             if True:
                 images = images.cuda()
                 target = target.cuda()
@@ -136,11 +146,11 @@ def run(args, length=10):
             
             hfc_scores = loss_fn_(src_model.feature_list(images)[1], [target, [mean_list, pre_chol_list, weight_list]])
             
-            for i in range(2):
+            for i in range(10):
                 total_num += 1
-                ood_images = add_rand_mask(images, length=length)
-                to_PIL(ood_images[0]).save('OOD.png')
-                import ipdb; ipdb.set_trace()
+                ood_images = run_synthesis(images,  tumor_type, num_tumor)
+                # to_PIL(ood_images[0]).save('OOD.png')
+                # import ipdb; ipdb.set_trace()
                 bingo_ood = src_model(ood_images).argmax(dim=1).detach().cpu().item() == 1 - target
                 if not bingo_ood:
                     total_false_predict += 1
@@ -160,11 +170,9 @@ def run(args, length=10):
     for i in range(47, 48):
         pred = np.stack([total_clean_scores[i], total_ood_scores[i]])
         auc = roc_auc_score(gt, pred)
-        print(f'Layer {i+1} AUC {auc}, ACC {acc}')
 
     return auc, acc
 
-    # calculate metrics
     
 
 if __name__ == "__main__":
@@ -198,28 +206,46 @@ if __name__ == "__main__":
                             'multi node data parallel training')
     args = parser.parse_args()
 
-    length_setting = [1, 2, 4, 8, 16, 32, 64]
-    length_setting = [32]
+    tumor_types = ['tiny', 'small', 'medium', 'large']
+    num_tumors = {
+        "tiny": [2, 4, 6],
+        "small": [2, 4, 6],
+        "medium": [1, 2, 4],
+        "large": [1, 2, 3],
+    }
+
+    # # for test
+    # tumor_types = ['small']
+    # num_tumors = {
+    #     "small": [4],
+    # }
+
+    # for tumor_type in tumor_types:
+    #     for num_tumor in num_tumors[tumor_type]:
+    #         run(args, tumor_type, num_tumor)
+
+    # import ipdb; ipdb.set_trace()
     auc_list = []
     acc_list = []
-    for i in length_setting:
-        det_auc, acc = run(args, i)
-        auc_list.append(det_auc)
-        acc_list.append(acc)
+    for tumor_type in tumor_types:
+        for num_tumor in num_tumors[tumor_type]:
+            det_auc, acc = run(args, tumor_type, num_tumor)
+            auc_list.append(det_auc)
+            acc_list.append(acc)
+            print(tumor_type, num_tumor, det_auc, acc)
     auc_list = np.array(auc_list)
     acc_list = np.array(acc_list)
-    length_setting = np.array(length_setting)
 
     import ipdb; ipdb.set_trace()
 
-    rewrite = True
-    save_path = f'temp_{args.dataset}.pkl'
-    if not os.path.isfile(save_path) or rewrite:
-        with open(save_path, 'wb') as f:
-            pickle.dump([length_setting, auc_list, acc_list], f)
-    else:
-        with open(save_path, 'rb') as f:
-            ength_setting, auc_list = pickle.load(f)
+    # rewrite = True
+    # save_path = f'temp_{args.dataset}.pkl'
+    # if not os.path.isfile(save_path) or rewrite:
+    #     with open(save_path, 'wb') as f:
+    #         pickle.dump([length_setting, auc_list, acc_list], f)
+    # else:
+    #     with open(save_path, 'rb') as f:
+    #         ength_setting, auc_list = pickle.load(f)
 
     
 
